@@ -885,33 +885,340 @@
 
 
         <script>
-            //=========== theme toggle===========
-            const html = document.documentElement;
-            const tBtn = document.getElementById('themeBtn');
-            const tIcon = document.getElementById('themeIcon');
+            
+            const KEY = 'pocket.transaction.v1';
 
-            const savedTheme = localStorage.getItem('pocket.theme') || 'dark';
-            html.setAttribute('data-theme', savedTheme);
-            updateThemeIcon(savedTheme);
+            const DEFAULTS_CATEGORIES = {
+                expense: [
+                    {id: 'food', name: 'Food & Dining', icon: '🍔'},
+                    {id: 'transport', name: 'Transport', icon: '🚗'},
+                    {id: 'bills', name: 'Bills & Utilities', icon: '💡'},
+                    {id: 'shopping', name: 'Shopping', icon: '🛍️'},
+                    {id: 'entertainment', name: 'Entertainment', icon: '🎬'},
+                    {id: 'health', name: 'Health', icon: '💊'},
+                    {id: 'education', name: 'Education', icon: '📚'},
+                    {id: 'rent', name: 'Rent', icon: '🏠'},
+                    {id: 'other-exp', name: 'Other', icon: '📌'},
+                ],
+                income: [
+                    {id: 'salary', name: 'Salary', icon: '💼'},
+                    {id: 'freelance', name: 'Freelance', icon: '💻'},
+                    {id: 'gift', name: 'Gift', icon: '🎁'},
+                    {id: 'investment', name: 'Investment', icon: '📈'},
+                    {id: 'other-inc', name: 'Other', icon: '💰'}
+                ],
+            };
 
-            tBtn.addEventListener('click', () => {
-                const cur = html.getAttribute('data-theme');
-                const next = cur === 'dark' ? 'light' : 'dark';
-                html.setAttribute('data-theme', next);
-                localStorage.setItem('pocket.theme', next);
-                updateThemeIcon(next);
-            });
+            const categories = DEFAULTS_CATEGORIES;
+            let transactions = [];
+            let currentType = 'expense';
+            let editingId = null;
 
             
-            function updateThemeIcon(theme){
-                if (theme === 'dark'){
-                    tIcon.innerHTML = '<path d="M21 12.79A9 9 0 1 1 11.21 3 7 7 0 0 0 21 12.79z"></path>';
-                } else {
-                     tIcon.innerHTML = '<circle cx="12" cy="12" r="4"></circle><path d="M12 2v2M12 20v2M4.93 4.93l1.41 1.41M17.66 17.66l1.41 1.41M2 12h2M20 12h2M6.34 17.66l-1.41 1.41M19.07 4.93l-1.41 1.41"></path>';
-                }
+            try {
+                const saved = JSON.parse(localStorage.getItem(KEY));
+                if (Array.isArray(saved)) transactions = saved;
+            } catch (e) { transactions = [];}
+
+            const saveTx = () => {
+                try {localStorage.setItem(KEY, JSON.stringify(transactions)); } catch (e) {}
+            };
+
+            const $ = (s) => document.querySelector(s);
+            const $$ = (s) => document.querySelectorAll(s);
+
+            const uid = () => 'tx_' +Date.now().toString(36) + Math.random().toString(36).slice(2,7);
+            const todayISO = () => new Date().toISOString().slice(0, 10);
+
+            const fmtMoney = (n) => Math.abs(n).toLocaleString('en-US', {minimumFractionDigits: 2, maximumFractionDigits: 2});
+
+            function getCatById(type, id){
+                return (categories[type] || []).find((c) => c.id === id) || {id, name: 'Unknown', icon: '❓'};
             }
 
-             console.log('%c💎 Pocket — Stage 1 loaded', 'color:#6366f1;font-weight:700;font-size:14px');
+            function escapeHtml(s){
+                return String(s).replace(/[&<>'"]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"' : '&quot;', "'" :'&#39;' }[c]));
+            }
+                function formatDate(iso){
+                    const d = new Date(iso + 'T00:00:00');
+                    const today = new Date(); today.setHours(0, 0, 0, 0);
+                    const diff = Math.round((today - d)/86400000);
+                    if (diff === 0) return 'Today';
+                    if (diff === 1) return 'Yesterday';
+                    if (diff > 1 && diff <7) return diff+ ' days ago';
+                    return d.toLocalDateString('en-US', {month: 'short', day: 'numeric', year: 'numeric'});
+                }
+
+                const html = document.documentElement;
+                const tBtn = document.getElementById('themeBtn');
+                const tIcon = document.getElementById('themeIcon');
+
+                const savedTheme = localStorage.getItem('pocket.theme') || 'dark';
+                html.setAttribute('data-theme', savedTheme);
+                updateThemeIcon(savedTheme);
+
+                tBtn.addEventListener('click', ()=> {
+                    const cur = html.getAttribute('data-theme');
+                    const next = cur === 'dark' ? 'light' : 'dark';
+                    html.setAttribute('data-theme', next);
+                    localStorage.setItem('pocket.theme', next);
+                    updateThemeIcon(next);
+                });
+
+                function updateThemeIcon(theme){
+                    if (theme === 'dark'){
+                        tIcon.innerHTML = '<path d="M21 12.79A9 9 0 1 1 11.21 3 7 7 0 0 0 21 12.79z"></path>';
+                    } else {
+                        tIcon.innerHTML = '<circle cx="12" cy="12" r="4"></circle><path d="M12 2v2M12 20v2M4.93 4.93l1.41 1.41M17.66 17.66l1.41 1.41M2 12h2M20 12h2M6.34 17.66l-1.41 1.41M19.07 4.93l-1.41 1.41"></path>';
+                    }
+                }
+
+                const dlg = $('#txDialog');
+                const form = $('#txForm');
+
+                function populateCategorySelect(type, selectedId) {
+                    const sel = $('#txCategory');
+                    sel.innerHTML = '';
+                    (categories[type] || []).forEach((c) => {
+                        const opt = document.createElement('option');
+                        opt.value = c.id;
+                        opt.textContent = c.icon + '  ' + c.name;
+                        if (selectedId === c.id) opt.selected = true;
+                        sel.appendChild(opt);
+                    });
+                }
+
+                function setType(type){
+                    currentType = type;
+                    $$('.type-switch button').forEach((b) => {
+                        b.classList.toggle('on', b.dataset.type === type);
+                    });
+                    populateCategorySelect(type);
+                }
+
+                function openModal(tx){
+                    form.reset();
+                    editingId = tx ? tx.id : null;
+                    $('#modalTitle').textContent = tx ? 'Edit transaction' : 'Add transaction';
+                    $('#txId').value = tx ? tx.id : '';
+
+                    if (tx){
+                        setType(tx.type);
+                        $('#txAmount').value = tx.amount;
+                        $('#txDate').value = tx.date;
+                        $('#txNote').value = tx.note || '';
+                        populateCategorySelect(tx.type, tx.categoryId);
+                    } else {
+                        setType('expense');
+                        $('#txDate').value = todayISO();
+                    }
+
+                    dlg.showModal();
+                    setTimeout(() => $('#txAmount').focus(), 80);
+                }
+
+                function closeModal(){
+                    dlg.close();
+                    editingId = null;
+                }
+
+                $$('.type-switch button').forEach((b) => {
+                    b.addEventListener('click', ()=> setType(b.dataset.type));
+                });
+
+                $('#addBtn').addEventListener('click', () => openModal(null));
+                $('#closeModal').addEventListener('click', closeModal);
+                $('#cancelBtn').addEventListener('click', closeModal);
+
+                dlg.addEventListener('click', (e) => {
+                    if (e.target === dlg) closeModal();
+                });
+
+                form.addEventListener('submit', (e) => {
+                    e.preventDefault();
+                    const amount = parseFloat($('#txAmount').value);
+                    const categoryId = $('#txCategory').value;
+                    const date = $('#txDate').value;
+                    const note = $('#txNote').value.trim();
+
+                    if(!amount || amount <= 0 || !categoryId || !date) return;
+
+                    if(editingId) {
+                        const tx = transactions.find((t) => t.id === editingId);
+                        if (tx) Object.assign(tx, {type: currentType, amount, categoryId, date, note});
+                    } else {
+                        transactions.push({
+                            id: uid(),
+                            type: currentType,
+                            amount,
+                            categoryId,
+                            date,
+                            note,
+                            createdAt: Date.now(),
+                        });
+                    }
+
+                    saveTx();
+                    closeModal();
+                    render();
+                });
+
+                function render(){
+                    renderStats();
+                    renderList();
+                }
+
+                function renderStats(){
+                    const income = transactions.filter((t) => t.type === 'income').reduce((s, t) => s + t.amount, 0);
+                    const expense = transactions.filter((t) => t.type === 'expense').reduce((s, t) => s + t.amount, 0);
+                    const balance = income - expense;
+
+                    $('#statBalance').textContent = (balance <0?'-$':'$') + fmtMoney(balance);
+                    $('#statBalance').style.color = balance <0?'var(--expense)':'';
+
+                    $('#statIncome').textContent = '$' + fmtMoney(income);
+                    $('#statExpense').textContent = '$' + fmtMoney(expense);
+
+                    const incCount = transactions.filter((t) => t.type === 'income').length;
+                    const expCount = transactions.filter((t) => t.type === 'expense').length;
+
+                    $('#statBalanceSub').textContent = transactions.length === 0
+                       ? 'All-time net'
+                       : transactions.length + ' transaction' + (transactions.length === 1 ? '' : 's');
+                       $('#statIncomeSub').textContent = incCount + ' entr' + (incCount === 1?'y':'ies');
+                       $('#statExpenseSub').textContent = expCount + ' entr' + (expCount === 1?'y':'ies');
+                }
+
+                function renderList(){
+                    const list = $('#list');
+                    const search = ($('#searchInput').value || '').toLowerCase().trim();
+                    const fType = $('#filterType').value;
+                    const fCat = $('#filterCategory').value;
+                    const fRange = $('#filterRange').value;
+
+                    let items = transactions.slice();
+
+                    if (fType !== 'all') items = items.filter((t) => t.type === fType);
+                    if (fCat !== 'all') items = items.filter((t) => t.categoryId === fCat);
+
+                    if (fRange !== 'all') {
+                        const today = new Date(); today.setHours(0, 0, 0, 0);
+                        let from;
+                        if (fRange === 'today') from = today;
+                        else if (fRange === 'month') from = new Date(today.getFullYear(), today.getMonth(), 1);
+                        else from = new Date(today.getTime()-(parseInt(fRange, 10)-1)*86400000);
+                        items = items.filter((t) => new Date(t.date + 'T00:00:00') >= from);
+                    }
+
+                    if (search){
+                        items = items.filter((t) => {
+                            const cat = getCatById(t.type, t.categoryId);
+                            return (t.note || '').toLowerCase().includes(search) || cat.name.toLowerCase().includes(search);
+                        });
+                    }
+
+                    items.sort((a, b) => b.date.localeCompare(a.date) || (b.createdAt || 0)-(a.createdAt || 0));
+
+                    $('#listCount').textContent = items.length + ' entr' + (items.length === 1 ? 'y':'ies');
+
+                    if (items.length === 0){
+                        const isEmpty = transactions.length === 0;
+                        list.innerHTML = `
+                        <div class="empty">
+                            <div class="empty-icon">
+                                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round">
+                                   <rect x="2" y="5" width="20" height="14" rx="3"></rect>
+                                   <line x1="2" y1="10" x2="22" y2="10"></line>
+                                </svg>
+                            </div>
+                            <div class="empty-title">${isEmpty ? 'No transactions yet' : 'No matches'}</div>
+                            <div class="empty-text">${isEmpty ? 'Click "+ Add" above or press N to record your first transaction.' : 'Try adjusting your filters or search term.'}</div>
+                        </div>`;
+
+                        return;
+                    }
+
+                    list.innerHTML = items.map((t, i) => {
+                        const cat = getCatById(t.type, t.categoryId);
+                        const sign = t.type === 'income'?'+':'-';
+                        return `<div class="tx ${t.type}" style="animation-delay:${Math.min(i*25, 300)}ms" data-id="${t.id}">
+                            <div class="tx-icon">${cat.icon}</div>
+                            <div class="tx-info">
+                                <div class="tx-cat">${escapeHtml(cat.name)}</div>
+                                <div class="tx-meta">${formatDate(t.date)}${t.note ? ' · ' + escapeHtml(t.note) : ''}</div>
+                            </div>
+                            <div class="tx-amount">${sign}$${fmtMoney(t.amount)}</div>
+                            <div class="tx-actions">
+                                   <button data-act="edit" data-id="${t.id}" title="Edit">
+                                       <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                                             <path d="M12 20h9"></path>
+                                             <path d="M16.5 3.5a2.121 2.121 0 0 1 3 3L7 19l-4 1 1-4L16.5 3.5z"></path>
+                                       </svg>
+                                   </button>
+                                   <button data-act="del" data-id="${t.id}" class="del" title="Delete">
+                                      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                                         <polyline points="3 6 5 6 21 6"></polyline>
+                                         <path d="M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6"></path>
+                                         <path d="M10 11v6M14 11v6"></path>
+                                         <path d="M9 6V4a1 1 0 0 1 1-1h4a1 1 0 0 1 1 1v2"></path>
+                                     </svg>
+                                   </button>
+                            </div>
+                            </div>`;
+                    }).join('');
+                }
+                
+                $('#list').addEventListener('click', (e) => {
+                    const btn = e.target.closest('[data-act]');
+                    if (!btn) return;
+                    const id = btn.dataset.id;
+                    const act = btn.dataset.act;
+
+                    if (act === 'del') {
+                        if (!confirm('Delete this transactions?')) return;
+                        transactions = transactions.filter((t) => t.id !== id);
+                        saveTx();
+                        render();
+                    } else if (act === 'edit'){
+                        const tx = transactions.find((t) => t.id === id);
+                        if(tx) openModal(tx);
+                    }
+                });
+
+                $('#searchInput').addEventListener('input', renderList);
+                $('#filterType').addEventListener('change', renderList);
+                $('#filterCategory').addEventListener('change', renderList);
+                $('#filterRange').addEventListener('change', renderList);
+
+                function populateFilterCategories(){
+                    const sel = $('#filterCategory');
+                    const cur = sel.value;
+                    sel.innerHTML = '<option value="all">All categories</option>';
+                    const all = [...categories.expense, ...categories.income];
+                    all.forEach((c) => {
+                        const opt = document.createElement('option');
+                        opt.value = c.id;
+                        opt.textContent = c.icon + ' ' + c.name;
+                        sel.appendChild(opt);
+                    });
+                    if([...sel.options].some((o) => o.value === cur)) sel.value = cur;
+                }
+
+
+                document.addEventListener('keydown', (e) =>{
+                    const typing =  /^(INPUT|TEXTAREA|SELECT)$/.test(document.activeElement.tagName);
+                    if (e.key.toLowerCase() === 'n' && !typing && !dlg.open) {
+                        e.preventDefault();
+                        openModal(null);
+                    }
+                    if (e.key === 'Escape' && dlg.open) closeModal();
+                });
+
+                populateFilterCategories();
+                render();
+
+                console.log('%c💎 Pocket — Stage 2 loaded', 'color:#6366f1;font-weight:700;font-size:14px');
+
         </script>
     </body>
 </html>
