@@ -946,7 +946,7 @@
                     if (diff === 0) return 'Today';
                     if (diff === 1) return 'Yesterday';
                     if (diff > 1 && diff <7) return diff+ ' days ago';
-                    return d.toLocalDateString('en-US', {month: 'short', day: 'numeric', year: 'numeric'});
+                    return d.toLocaleDateString('en-US', {month: 'short', day: 'numeric', year: 'numeric'});
                 }
 
                 const html = document.documentElement;
@@ -1218,7 +1218,402 @@
                 render();
 
                 console.log('%c💎 Pocket — Stage 2 loaded', 'color:#6366f1;font-weight:700;font-size:14px');
+                
 
+             // yaaayyy gonna learn charts and add to my projeeeeeeect
+
+             function cssVar(name){
+                return getComputedStyle(document.documentElement).getPropertyValue(name).trim();
+             }
+
+             function hexToRgba(hex, alpha){
+                const h = hex.replace('#', '');
+                const r = parseInt(h.substring(0, 2), 16);
+                const g = parseInt(h.substring(2, 4), 16);
+                const b = parseInt(h.substring(4, 6), 16);
+                return `rgba(${r}, ${g}, ${b}, ${alpha})`;
+             }
+
+             const CATEGORY_COLORS ={
+                    food: '#f97316',
+                    transport: '#3b82f6',
+                    bills: '#eab308',
+                    shopping: '#ec4899',
+                    entertainment: '#8b5cf6',
+                    health: '#14b8a6',
+                    education: '#06b6d4',
+                    rent: '#a855f7',
+                    'other-exp': '#94a3b8',
+                    
+                    salary: '#22c55e',
+                    freelance: '#10b981',
+                    gift: '#84cc16',
+                    investment: '#0ea5e9',
+                    'other-inc': '#64748b',
+             };
+
+             function getCatColor(categoryId){
+                return CATEGORY_COLORS[categoryId] || '#6366f1';
+             }
+
+             let pieChart = null;
+             let lineChart = null;
+             let currentLineRange = 30;
+
+             Chart.defaults.font.family = "'Inter', system-ui, sans-serif";
+             Chart.defaults.font.size = 12;
+             Chart.defaults.color = cssVar('--chart-text');
+
+             function applyChartTheme(){
+                const gridColor = cssVar('--chart-grid');
+                const textColor = cssVar('--chart-text');
+
+                if (pieChart){
+                    pieChart.options.plugins.legend.labels.color = textColor;
+                    pieChart.update();
+                }
+                if (lineChart){
+                    lineChart.options.scales.x.ticks.color = textColor;
+                    lineChart.options.scales.y.ticks.color = textColor;
+                    lineChart.options.scales.x.grid.color = gridColor;
+                    lineChart.options.scales.y.grid.color = gridColor;
+                    lineChart.options.plugins.legend.labels.color = textColor;
+                    lineChart.options.plugins.tooltip.backgroundColor = cssVar('--bg-2');
+                    lineChart.options.plugins.tooltip.titleColor = cssVar('--ink');
+                    lineChart.options.plugins.tooltip.bodyColor = cssVar('--ink-2');
+                    lineChart.options.plugins.tooltip.borderColor = cssVar('--line');
+                    lineChart.update();
+                }
+             }
+
+             function buildPieData(){
+                const expenses = transactions.filter((t) => t.type === 'expense');
+
+                const byCat = {};
+                expenses.forEach((t) => {
+                    byCat[t.categoryId] = (byCat[t.categoryId] || 0) + t.amount;
+                });
+
+                const entries = Object.entries(byCat).sort((a, b) => b[1]-a[1]);
+
+                const labels = [];
+                const data = [];
+                const colors = [];
+                const iconLabels = [];
+
+                entries.forEach(([catId, total]) => {
+                    const cat = getCatById('expense', catId);
+                    labels.push(cat.name);
+                    iconLabels.push(cat.icon + ' ' + cat.name);
+                    data.push(total);
+                    colors.push(getCatColor(catId));
+                });
+
+                return {labels: iconLabels, data, colors};
+             }
+
+             function renderPieChart(){
+                const canvas = $('#pieChart');
+                if (!canvas) return;
+
+                const {labels, data, colors} = buildPieData();
+
+                if (data.length === 0) {
+                    if (pieChart){ pieChart.destroy(); pieChart = null;}
+                    const ctx = canvas.getContext('2d');
+                    const w = canvas.width, h = canvas.height;
+                    ctx.clearRect(0, 0, w, h);
+                    ctx.fillStyle = cssVar('--ink-3');
+                    ctx.font = '500 14px Inter';
+                    ctx.textAlign = 'center';
+                    ctx.textBaseline = 'middle';
+                    ctx.fillText('No expenses yet', w/2, h/2);
+                    return;
+                }
+
+                const total = data.reduce((s, v) => s+v, 0);
+                const textColor = cssVar('--chart-text');
+                const bgColor = cssVar('--bg-2');
+
+                const cfg = {
+                    type: 'doughnut',
+                    data: {
+                        labels, 
+                        datasets: [{
+                            data, 
+                            backgroundColor: colors,
+                            borderColor: cssVar('--bg'),
+                            borderWidth: 3,
+                            hoverOffset: 8,
+                        }],
+                    },
+                    options: {
+                        responsive: true,
+                        maintainAspectRatio: false,
+                        cutout: '62%',
+                        animation: {
+                            animateRotate: true,
+                            animateScale: true,
+                            duration: 700,
+                            easing: 'easeOutCubic',
+                        },
+                        plugins: {
+                            legend: {
+                                position: 'bottom',
+                                labels: {
+                                    color: textColor,
+                                    boxWidth: 10,
+                                    boxHeight: 10,
+                                    borderRadius: 3,
+                                    usePointStyle: true,
+                                    pointStyle: 'circle',
+                                    padding: 12,
+                                    font: { size: 11.5, weight: '500'},
+                                    generateLabels: (chart) => {
+                                        const d = chart.data;
+                                        return d.labels.map((label, i) => {
+                                            const val = d.datasets[0].data[i];
+                                            const pct = ((val/total)*100).toFixed(0);
+                                            return {
+                                                text: `${label} · ${pct}%`,
+                                                fillStyle: d.datasets[0].backgroundColor[i],
+                                                strokeStyle: d.datasets[0].backgroundColor[i],
+                                                lineWidth: 0,
+                                                index: i,
+                                            };
+                                        });
+                                    },
+                                },
+                            },
+                            tooltip: {
+                                backgroundColor: bgColor,
+                                titleColor: cssVar('--ink'),
+                                bodyColor: cssVar('--ink-2'),
+                                borderColor: cssVar('--line'),
+                                borderWidth: 1,
+                                padding: 12,
+                                cornerRadius: 10, 
+                                displayColors: true,
+                                boxPadding: 6,
+                                callbacks: {
+                                    label: (ctx) => {
+                                        const val = ctx.parsed;
+                                        const pct = ((val/total) * 100).toFixed(1);
+                                        return `  $${fmtMoney(val)} (${pct}%)`;
+                                    },
+                                },
+                            },
+                        },
+                    },
+                };
+
+                if (pieChart) {
+                    pieChart.data = cfg.data;
+                    pieChart.update();
+                } else {
+                    pieChart = new Chart(canvas, cfg);
+                }
+             }
+
+             function buildLineData(days) {
+                const today =  new Date();
+                today.setHours(0, 0, 0, 0);
+
+                const buckets = [];
+                const map = {};
+
+                for (let i= days-1; i>=0; i--){
+                    const d = new Date(today);
+                    d.setDate(today.getDate()-i);
+                    const iso = d.toISOString().slice(0,10);
+                    const item = {iso, date: d, income: 0, expense: 0};
+                    buckets.push(item);
+                    map[iso]=item;
+                }
+
+                transactions.forEach((t) => {
+                    const b = map[t.date];
+                    if(!b) return;
+                    if (t.type === 'income') b.income +=t.amount;
+                    else b.expense += t.amount;
+                });
+
+                const labels = buckets.map((b) => {
+                    const d = b.date;
+                    if (days <= 7){
+                        return d.toLocaleDateString('en-US', {weekday: 'short'});
+                    }
+                    return d.toLocaleDateString('en-US', {month: 'short', day: 'numeric'});
+                });
+
+                return {
+                    labels, 
+                    income: buckets.map((b) => b.income),
+                    expense: buckets.map((b) => b.expense),
+                };
+             }
+
+             function renderLineChart(){
+                const canvas = $('#lineChart');
+                if(!canvas) return;
+
+                const {labels, income, expense} = buildLineData(currentLineRange);
+
+                const textColor = cssVar('--chart-text');
+                const gridColor = cssVar('--chart-grid');
+                const bgColor = cssVar('--bg-2');
+                const incomeColor = cssVar('--income');
+                const expenseColor = cssVar('--expense');
+
+                const cfg = {
+                    type: 'line',
+                    data: {
+                        labels,
+                        datasets: [
+                            {
+                                label: 'Income',
+                                data: income,
+                                borderColor: incomeColor,
+                                backgroundColor: hexToRgba(incomeColor, 0.12),
+                                borderWidth: 2.5,
+                                tension: 0.4,
+                                fill: true,
+                                pointRadius: 0,
+                                pointHoverRadius: 5,
+                                pointHoverBackgroundColor: incomeColor,
+                                pointHoverBorderColor: '#fff',
+                                pointHoverBorderWidth: 2,
+                            },
+                            {
+                                label: 'Expenses',
+                                data: expense,
+                                borderColor: expenseColor,
+                                backgroundColor: hexToRgba(expenseColor, 0.12),
+                                borderWidth: 2.5,
+                                tension: 0.4,
+                                fill: true,
+                                pointRadius: 0,
+                                pointHoverRadius: 5,
+                                pointHoverBackgroundColor: expenseColor,
+                                pointHoverBorderColor: '#fff',
+                                pointHoverBorderWidth: 2,
+                            },
+                        ],
+                    },
+                    options: {
+                        responsive: true,
+                        maintainAspectRatio: false,
+                        interaction: {
+                            mode: 'index',
+                            intersect: false,
+                        },
+                        animation: {
+                            duration: 700,
+                            easing: 'easeOutCubic',
+                        },
+                        plugins: {
+                            legend:{
+                                position: 'top',
+                                align: 'end',
+                                labels: {
+                                    color: textColor,
+                                    boxWidth: 10,
+                                    boxHeight: 10,
+                                    usePointStyle: true,
+                                    pointStyle: 'circle',
+                                    padding: 14,
+                                    font: {size: 11.5, weight: '500'},
+                                },
+                            },
+                            tooltip: {
+                                backgroundColor: bgColor,
+                                titleColor: cssVar('--ink'),
+                                bodyColor: cssVar('--ink-2'),
+                                borderColor: cssVar('--line'),
+                                borderWidth: 1,
+                                padding: 12,
+                                cornerRadius: 10, 
+                                boxPadding: 6,
+                                callbacks: {
+                                    label: (ctx) => `  ${ctx.dataset.label}: $${fmtMoney(ctx.parsed.y)}`,
+                                },
+                            },
+                        },
+                        scales: {
+                            x: {
+                                  grid: {
+                                    color: gridColor,
+                                    drawBorder: false,
+                                    display: currentLineRange <= 30,
+                                  },
+                                  ticks: {
+                                    color: textColor, 
+                                    maxRotation: 0,
+                                    autoSkipPadding: 16,
+                                    font: {size:11},
+                                  },
+                            },
+                            y: {
+                                beginAtZero: true,
+                                grid: {
+                                    color: gridColor,
+                                    drawBorder: false,
+                                },
+                                ticks: {
+                                    color: textColor,
+                                    font: {size:11},
+                                    callback: (val) => '$' + val,
+                                    maxTicksLimit: 6,
+                                },
+                            },
+                        },
+                    },
+                };
+
+                if (lineChart){
+                    lineChart.data = cfg.data;
+                    lineChart.options = cfg.options;
+                    lineChart.update();
+                } else {
+                    lineChart = new Chart(canvas, cfg);
+                }
+             }
+
+             $$('.chip-toggle button').forEach((b) => {
+                b.addEventListener('click', () => {
+                    $$('.chip-toggle button').forEach((x) => x.classList.remove('on'));
+                    b.classList.add('on');
+                    currentLineRange = parseInt(b.dataset.range, 10);
+
+                    const sub = document.querySelectorAll('.chart-sub')[1];
+                    if (sub) sub.textContent = `Last ${currentLineRange} days`;
+                    renderLineChart();
+                });
+             });
+
+             const _origRender = render;
+             render = function () {
+                _origRender();
+                renderPieChart();
+                renderLineChart();
+             };
+
+             const _origToggle = tBtn.onclick;
+             const _origClickHandler = tBtn;
+
+             tBtn.addEventListener('click', () => {
+                setTimeout(() =>{
+                    Chart.defaults.color = cssVar('--chart-text');
+                    applyChartTheme();
+                    renderPieChart();
+                    renderLineChart();
+                }, 50);
+             });
+
+             renderPieChart();
+             renderLineChart();
+
+             console.log('%c📊 Pocket — Stage 3 loaded (charts)', 'color:#22c55e;font-weight:700;font-size:14px')
         </script>
     </body>
 </html>
